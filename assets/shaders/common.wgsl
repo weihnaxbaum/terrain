@@ -1,6 +1,6 @@
 #define_import_path common
 
-const grass_color = vec3(0.1, 0.4, 0.0);
+const grass_color: vec3<f32> = vec3(0.1, 0.4, 0.0);
 
 // Returns the vector pointing to the sun
 fn sun_dir(time: f32) -> vec3<f32> {
@@ -13,7 +13,7 @@ fn sun_dir(time: f32) -> vec3<f32> {
 }
 
 // Relative to the sun's brightness
-const moon_brightness = 0.3;
+const moon_brightness: f32 = 0.3;
 
 // TODO: improve
 fn moon_dir(sun_dir: vec3<f32>) -> vec3<f32> {

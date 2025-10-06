@@ -4,34 +4,35 @@
 use std::{array, borrow::Cow, f32::consts::FRAC_PI_2, mem, result::Result, time::Duration};
 
 use bevy::{
+    camera::primitives::Aabb,
     core_pipeline::{
+        FullscreenShader,
         core_3d::graph::{Core3d, Node3d},
-        fullscreen_vertex_shader::fullscreen_shader_vertex_state,
     },
     ecs::{query::QueryItem, system::lifetimeless::Read},
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
+    mesh::PlaneMeshBuilder,
     platform::collections::HashSet,
     prelude::*,
     render::{
-        Render, RenderApp, RenderSet,
+        Render, RenderApp, RenderSystems,
         globals::{GlobalsBuffer, GlobalsUniform},
-        mesh::PlaneMeshBuilder,
-        primitives::Aabb,
         render_graph::{
-            NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode, ViewNodeRunner,
+            NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
         },
         render_resource::{
             AsBindGroup, BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, MultisampleState,
             PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-            RenderPipelineDescriptor, Sampler, SamplerBindingType, ShaderRef, ShaderStages,
+            RenderPipelineDescriptor, Sampler, SamplerBindingType, ShaderStages,
             SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
-            TextureSampleType, TextureUsages,
+            TextureSampleType, TextureUsages, VertexState,
             binding_types::{sampler, texture_2d, texture_2d_multisampled, uniform_buffer},
         },
         renderer::{RenderContext, RenderDevice},
         view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
+    shader::ShaderRef,
     time::common_conditions::on_timer,
     window::WindowMode,
 };
@@ -173,7 +174,7 @@ fn update_state(
 
 fn on_pause(mut commands: Commands) {
     commands.spawn((
-        StateScoped(AppState::Paused),
+        DespawnOnExit(AppState::Paused),
         Node {
             width: Val::Percent(90.0),
             height: Val::Percent(90.0),
@@ -186,7 +187,7 @@ fn on_pause(mut commands: Commands) {
         },
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
         BorderRadius::all(Val::Percent(5.0)),
-        BorderColor(Color::BLACK),
+        BorderColor::all(Color::BLACK),
         children![
             (Text::new("Paused"), TextFont::from_font_size(50.0)),
             (
@@ -361,8 +362,8 @@ impl Plugin for SkyPlugin {
             .add_systems(
                 Render,
                 (
-                    queue_sky_pipeline.in_set(RenderSet::Queue),
-                    prepare_sky_bind_group.in_set(RenderSet::PrepareBindGroups),
+                    queue_sky_pipeline.in_set(RenderSystems::Queue),
+                    prepare_sky_bind_group.in_set(RenderSystems::PrepareBindGroups),
                 ),
             )
             .add_render_graph_node::<ViewNodeRunner<RenderSkyNode>>(Core3d, RenderSkyLabel)
@@ -372,7 +373,8 @@ impl Plugin for SkyPlugin {
 
 #[derive(Resource)]
 struct SkyPipelineSpecializer {
-    shader: Handle<Shader>,
+    frag: Handle<Shader>,
+    vert: VertexState,
     layout: BindGroupLayout,
 }
 
@@ -380,7 +382,8 @@ impl FromWorld for SkyPipelineSpecializer {
     fn from_world(world: &mut World) -> Self {
         let rd = world.resource::<RenderDevice>();
         Self {
-            shader: world.load_asset("shaders/sky.wgsl"),
+            frag: world.load_asset("shaders/sky.wgsl"),
+            vert: world.resource::<FullscreenShader>().to_vertex_state(),
             layout: rd.create_bind_group_layout(
                 "sky_bind_group_layout",
                 &BindGroupLayoutEntries::with_indices(
@@ -408,7 +411,7 @@ impl SpecializedRenderPipeline for SkyPipelineSpecializer {
             label: None,
             layout: vec![self.layout.clone()],
             push_constant_ranges: vec![],
-            vertex: fullscreen_shader_vertex_state(),
+            vertex: self.vert.clone(),
             primitive: default(),
             depth_stencil: None,
             multisample: MultisampleState {
@@ -416,9 +419,9 @@ impl SpecializedRenderPipeline for SkyPipelineSpecializer {
                 ..default()
             },
             fragment: Some(FragmentState {
-                shader: self.shader.clone(),
+                shader: self.frag.clone(),
                 shader_defs: vec![],
-                entry_point: Cow::Borrowed("main"),
+                entry_point: Some(Cow::Borrowed("main")),
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::bevy_default(),
                     blend: None,
@@ -496,12 +499,12 @@ impl ViewNode for RenderSkyNode {
         Read<ViewUniformOffset>,
     );
 
-    fn run<'w>(
+    fn run(
         &self,
         _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext<'w>,
-        (pipeline_id, view_target, bind_group, view_uniform_offset): QueryItem<'w, Self::ViewQuery>,
-        world: &'w World,
+        render_context: &mut RenderContext,
+        (pipeline_id, view_target, bind_group, view_uniform_offset): QueryItem<Self::ViewQuery>,
+        world: &World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
         let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_id.0) else {
@@ -530,7 +533,7 @@ impl Plugin for WaterPlugin {
             .expect("No RenderApp")
             .init_resource::<WaterPipelineSpecializer>()
             .init_resource::<SpecializedRenderPipelines<WaterPipelineSpecializer>>()
-            .add_systems(Render, queue_water_pipeline.in_set(RenderSet::Queue))
+            .add_systems(Render, queue_water_pipeline.in_set(RenderSystems::Queue))
             .add_render_graph_node::<ViewNodeRunner<RenderWaterNode>>(Core3d, RenderWaterLabel)
             .add_render_graph_edges(
                 Core3d,
@@ -545,7 +548,8 @@ impl Plugin for WaterPlugin {
 
 #[derive(Resource)]
 struct WaterPipelineSpecializer {
-    shader: Handle<Shader>,
+    frag: Handle<Shader>,
+    vert: VertexState,
     layout: BindGroupLayout,
     sampler: Sampler,
 }
@@ -554,7 +558,8 @@ impl FromWorld for WaterPipelineSpecializer {
     fn from_world(world: &mut World) -> Self {
         let rd = world.resource::<RenderDevice>();
         Self {
-            shader: world.load_asset("shaders/water.wgsl"),
+            frag: world.load_asset("shaders/water.wgsl"),
+            vert: world.resource::<FullscreenShader>().to_vertex_state(),
             layout: rd.create_bind_group_layout(
                 "water_bind_group_layout",
                 &BindGroupLayoutEntries::with_indices(
@@ -584,14 +589,14 @@ impl SpecializedRenderPipeline for WaterPipelineSpecializer {
             label: None,
             layout: vec![self.layout.clone()],
             push_constant_ranges: vec![],
-            vertex: fullscreen_shader_vertex_state(),
+            vertex: self.vert.clone(),
             primitive: default(),
             depth_stencil: None,
             multisample: default(),
             fragment: Some(FragmentState {
-                shader: self.shader.clone(),
+                shader: self.frag.clone(),
                 shader_defs: vec![],
-                entry_point: Cow::Borrowed("main"),
+                entry_point: Some(Cow::Borrowed("main")),
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::bevy_default(),
                     blend: None,
@@ -631,15 +636,14 @@ impl ViewNode for RenderWaterNode {
         Read<ViewUniformOffset>,
     );
 
-    fn run<'w>(
+    fn run(
         &self,
         _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext<'w>,
+        render_context: &mut RenderContext,
         (pipeline_id, view_target, view_depth_texture, view_uniform_offset): QueryItem<
-            'w,
             Self::ViewQuery,
         >,
-        world: &'w World,
+        world: &World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
         let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_id.0) else {
@@ -675,6 +679,7 @@ impl ViewNode for RenderWaterNode {
             .begin_render_pass(&RenderPassDescriptor {
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: post_process.destination,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: default(),
                 })],
