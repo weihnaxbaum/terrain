@@ -49,8 +49,8 @@ fn main() -> AppExit {
                 bevy::diagnostic::LogDiagnosticsPlugin::default(),
                 bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
             ),
-            SkyPlugin,
-            WaterPlugin,
+            sky_plugin,
+            water_plugin,
         ))
         .init_state::<AppState>()
         .add_systems(Startup, (setup, update_chunks).chain())
@@ -349,23 +349,19 @@ fn move_cam(
     tf.translation += rot * dir.normalize_or_zero() * *speed * time.delta_secs();
 }
 
-struct SkyPlugin;
-
-impl Plugin for SkyPlugin {
-    fn build(&self, app: &mut App) {
-        app.get_sub_app_mut(RenderApp)
-            .expect("No RenderApp")
-            .add_systems(RenderStartup, setup_sky)
-            .add_systems(
-                Render,
-                (
-                    queue_sky_pipeline.in_set(RenderSystems::Queue),
-                    prepare_sky_bind_group.in_set(RenderSystems::PrepareBindGroups),
-                ),
-            )
-            .add_render_graph_node::<ViewNodeRunner<RenderSkyNode>>(Core3d, RenderSkyLabel)
-            .add_render_graph_edge(Core3d, RenderSkyLabel, Node3d::MainOpaquePass);
-    }
+fn sky_plugin(app: &mut App) {
+    app.get_sub_app_mut(RenderApp)
+        .expect("No RenderApp")
+        .add_systems(RenderStartup, setup_sky)
+        .add_systems(
+            Render,
+            (
+                queue_sky_pipeline.in_set(RenderSystems::Queue),
+                prepare_sky_bind_group.in_set(RenderSystems::PrepareBindGroups),
+            ),
+        )
+        .add_render_graph_node::<ViewNodeRunner<RenderSkyNode>>(Core3d, RenderSkyLabel)
+        .add_render_graph_edge(Core3d, RenderSkyLabel, Node3d::MainOpaquePass);
 }
 
 fn setup_sky(
@@ -523,24 +519,20 @@ impl ViewNode for RenderSkyNode {
     }
 }
 
-struct WaterPlugin;
-
-impl Plugin for WaterPlugin {
-    fn build(&self, app: &mut App) {
-        app.get_sub_app_mut(RenderApp)
-            .expect("No RenderApp")
-            .add_systems(RenderStartup, setup_water)
-            .add_systems(Render, queue_water_pipeline.in_set(RenderSystems::Queue))
-            .add_render_graph_node::<ViewNodeRunner<RenderWaterNode>>(Core3d, RenderWaterLabel)
-            .add_render_graph_edges(
-                Core3d,
-                (
-                    Node3d::Tonemapping,
-                    RenderWaterLabel,
-                    Node3d::EndMainPassPostProcessing,
-                ),
-            );
-    }
+fn water_plugin(app: &mut App) {
+    app.get_sub_app_mut(RenderApp)
+        .expect("No RenderApp")
+        .add_systems(RenderStartup, setup_water)
+        .add_systems(Render, queue_water_pipeline.in_set(RenderSystems::Queue))
+        .add_render_graph_node::<ViewNodeRunner<RenderWaterNode>>(Core3d, RenderWaterLabel)
+        .add_render_graph_edges(
+            Core3d,
+            (
+                Node3d::Tonemapping,
+                RenderWaterLabel,
+                Node3d::EndMainPassPostProcessing,
+            ),
+        );
 }
 
 fn setup_water(
