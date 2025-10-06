@@ -15,7 +15,7 @@ use bevy::{
     platform::collections::HashSet,
     prelude::*,
     render::{
-        Render, RenderApp, RenderSystems,
+        Render, RenderApp, RenderStartup, RenderSystems,
         globals::{GlobalsBuffer, GlobalsUniform},
         render_graph::{
             NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
@@ -352,13 +352,10 @@ fn move_cam(
 struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
-    fn build(&self, _app: &mut App) {}
-
-    fn finish(&self, app: &mut App) {
+    fn build(&self, app: &mut App) {
         app.get_sub_app_mut(RenderApp)
             .expect("No RenderApp")
-            .init_resource::<SkyPipelineSpecializer>()
-            .init_resource::<SpecializedRenderPipelines<SkyPipelineSpecializer>>()
+            .add_systems(RenderStartup, setup_sky)
             .add_systems(
                 Render,
                 (
@@ -371,36 +368,39 @@ impl Plugin for SkyPlugin {
     }
 }
 
+fn setup_sky(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    fullscreen_shader: Res<FullscreenShader>,
+    rd: Res<RenderDevice>,
+) {
+    commands.init_resource::<SpecializedRenderPipelines<SkyPipelineSpecializer>>();
+    commands.insert_resource(SkyPipelineSpecializer {
+        frag: asset_server.load("shaders/sky.wgsl"),
+        vert: fullscreen_shader.to_vertex_state(),
+        layout: rd.create_bind_group_layout(
+            "sky_bind_group_layout",
+            &BindGroupLayoutEntries::with_indices(
+                ShaderStages::FRAGMENT,
+                // Bevy's atmosphere shader functions assume a specific
+                // [layout](https://github.com/bevyengine/bevy/blob/main/crates/bevy_pbr/src/atmosphere/bindings.wgsl).
+                // Bevy's mesh functions assume a different
+                // [layout](https://github.com/bevyengine/bevy/blob/main/crates/bevy_pbr/src/render/mesh_view_bindings.wgsl).
+                // Here we just mix 'n match to make it work :)
+                (
+                    (3, uniform_buffer::<ViewUniform>(true)),
+                    (11, uniform_buffer::<GlobalsUniform>(false)),
+                ),
+            ),
+        ),
+    });
+}
+
 #[derive(Resource)]
 struct SkyPipelineSpecializer {
     frag: Handle<Shader>,
     vert: VertexState,
     layout: BindGroupLayout,
-}
-
-impl FromWorld for SkyPipelineSpecializer {
-    fn from_world(world: &mut World) -> Self {
-        let rd = world.resource::<RenderDevice>();
-        Self {
-            frag: world.load_asset("shaders/sky.wgsl"),
-            vert: world.resource::<FullscreenShader>().to_vertex_state(),
-            layout: rd.create_bind_group_layout(
-                "sky_bind_group_layout",
-                &BindGroupLayoutEntries::with_indices(
-                    ShaderStages::FRAGMENT,
-                    // Bevy's atmosphere shader functions assume a specific
-                    // [layout](https://github.com/bevyengine/bevy/blob/main/crates/bevy_pbr/src/atmosphere/bindings.wgsl).
-                    // Bevy's mesh functions assume a different
-                    // [layout](https://github.com/bevyengine/bevy/blob/main/crates/bevy_pbr/src/render/mesh_view_bindings.wgsl).
-                    // Here we just mix 'n match to make it work :)
-                    (
-                        (3, uniform_buffer::<ViewUniform>(true)),
-                        (11, uniform_buffer::<GlobalsUniform>(false)),
-                    ),
-                ),
-            ),
-        }
-    }
 }
 
 impl SpecializedRenderPipeline for SkyPipelineSpecializer {
@@ -526,13 +526,10 @@ impl ViewNode for RenderSkyNode {
 struct WaterPlugin;
 
 impl Plugin for WaterPlugin {
-    fn build(&self, _app: &mut App) {}
-
-    fn finish(&self, app: &mut App) {
+    fn build(&self, app: &mut App) {
         app.get_sub_app_mut(RenderApp)
             .expect("No RenderApp")
-            .init_resource::<WaterPipelineSpecializer>()
-            .init_resource::<SpecializedRenderPipelines<WaterPipelineSpecializer>>()
+            .add_systems(RenderStartup, setup_water)
             .add_systems(Render, queue_water_pipeline.in_set(RenderSystems::Queue))
             .add_render_graph_node::<ViewNodeRunner<RenderWaterNode>>(Core3d, RenderWaterLabel)
             .add_render_graph_edges(
@@ -546,39 +543,42 @@ impl Plugin for WaterPlugin {
     }
 }
 
+fn setup_water(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    fullscreen_shader: Res<FullscreenShader>,
+    rd: Res<RenderDevice>,
+) {
+    commands.init_resource::<SpecializedRenderPipelines<WaterPipelineSpecializer>>();
+    commands.insert_resource(WaterPipelineSpecializer {
+        frag: asset_server.load("shaders/water.wgsl"),
+        vert: fullscreen_shader.to_vertex_state(),
+        layout: rd.create_bind_group_layout(
+            "water_bind_group_layout",
+            &BindGroupLayoutEntries::with_indices(
+                ShaderStages::FRAGMENT,
+                (
+                    (0, texture_2d_multisampled(TextureSampleType::Depth)),
+                    (
+                        1,
+                        texture_2d(TextureSampleType::Float { filterable: false }),
+                    ),
+                    (2, sampler(SamplerBindingType::NonFiltering)),
+                    (3, uniform_buffer::<ViewUniform>(true)),
+                    (11, uniform_buffer::<GlobalsUniform>(false)),
+                ),
+            ),
+        ),
+        sampler: rd.create_sampler(&default()),
+    });
+}
+
 #[derive(Resource)]
 struct WaterPipelineSpecializer {
     frag: Handle<Shader>,
     vert: VertexState,
     layout: BindGroupLayout,
     sampler: Sampler,
-}
-
-impl FromWorld for WaterPipelineSpecializer {
-    fn from_world(world: &mut World) -> Self {
-        let rd = world.resource::<RenderDevice>();
-        Self {
-            frag: world.load_asset("shaders/water.wgsl"),
-            vert: world.resource::<FullscreenShader>().to_vertex_state(),
-            layout: rd.create_bind_group_layout(
-                "water_bind_group_layout",
-                &BindGroupLayoutEntries::with_indices(
-                    ShaderStages::FRAGMENT,
-                    (
-                        (0, texture_2d_multisampled(TextureSampleType::Depth)),
-                        (
-                            1,
-                            texture_2d(TextureSampleType::Float { filterable: false }),
-                        ),
-                        (2, sampler(SamplerBindingType::NonFiltering)),
-                        (3, uniform_buffer::<ViewUniform>(true)),
-                        (11, uniform_buffer::<GlobalsUniform>(false)),
-                    ),
-                ),
-            ),
-            sampler: rd.create_sampler(&default()),
-        }
-    }
 }
 
 impl SpecializedRenderPipeline for WaterPipelineSpecializer {
