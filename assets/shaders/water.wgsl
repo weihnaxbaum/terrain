@@ -14,6 +14,7 @@
 @group(0) @binding(0) var depth_texture: texture_depth_multisampled_2d;
 @group(0) @binding(1) var texture: texture_2d<f32>;
 @group(0) @binding(2) var texture_sampler: sampler;
+@group(0) @binding(4) var<uniform> sim_sec: f32;
 
 const see_dist = 100.0;
 const falloff = 0.5;
@@ -73,7 +74,7 @@ fn main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 }
 
 fn brightness() -> f32 {
-    let sun_dir = common::sun_dir(globals.time);
+    let sun_dir = common::sun_dir(sim_sec);
     let moon_dir = common::moon_dir(sun_dir);
     let sun_height = common::map_sky_height(sun_dir.y);
     let moon_height = common::map_sky_height(moon_dir.y);
@@ -90,7 +91,7 @@ fn normal(pos: vec2<f32>, from_above: bool) -> vec3<f32> {
     var angle = 0.0;
     for (var i = 0; i < wave_octaves; i++) {
         let dir = vec2(cos(angle), sin(angle));
-        sum += cos(globals.time * speed + dot(pos, dir) * freq) * amp * dir * freq;
+        sum += cos(sim_sec * speed + dot(pos, dir) * freq) * amp * dir * freq;
         freq *= 2.0;
         amp *= 0.5;
         angle += 1.0;

@@ -16,7 +16,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
-        globals::{GlobalsBuffer, GlobalsUniform},
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_graph::{
             NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
         },
@@ -24,12 +24,12 @@ use bevy::{
             AsBindGroup, BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, MultisampleState,
             PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-            RenderPipelineDescriptor, Sampler, SamplerBindingType, ShaderStages,
+            RenderPipelineDescriptor, Sampler, SamplerBindingType, ShaderStages, ShaderType,
             SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
-            TextureSampleType, TextureUsages, VertexState,
+            TextureSampleType, TextureUsages, UniformBuffer, VertexState,
             binding_types::{sampler, texture_2d, texture_2d_multisampled, uniform_buffer},
         },
-        renderer::{RenderContext, RenderDevice},
+        renderer::{RenderContext, RenderDevice, RenderQueue},
         view::{ViewDepthTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
     shader::ShaderRef,
@@ -44,6 +44,7 @@ fn main() -> AppExit {
             DefaultPlugins,
             NoisyShaderPlugin,
             MaterialPlugin::<TerrainMaterial>::default(),
+            ExtractResourcePlugin::<SimTime>::default(),
             #[cfg(feature = "frame_time_diagnostics")]
             (
                 bevy::diagnostic::LogDiagnosticsPlugin::default(),
@@ -60,6 +61,7 @@ fn main() -> AppExit {
                 (
                     update_chunks.run_if(on_timer(Duration::from_secs(1))),
                     move_cam,
+                    tick_sim_time,
                 )
                     .run_if(in_state(AppState::Running)),
                 update_state,
@@ -79,7 +81,11 @@ enum AppState {
 }
 
 #[derive(AsBindGroup, Clone, Asset, TypePath)]
-struct TerrainMaterial {}
+struct TerrainMaterial {
+    // TODO: consider using a specialized mesh pipeline
+    #[uniform(0)]
+    sim_sec: f32,
+}
 
 impl Material for TerrainMaterial {
     fn vertex_shader() -> ShaderRef {
@@ -137,6 +143,8 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
 ) {
+    commands.init_resource::<SimTime>();
+
     commands.spawn(Camera3d {
         depth_texture_usages: (TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING)
             .into(),
@@ -156,7 +164,9 @@ fn setup(
             .build(),
         )
     })));
-    commands.insert_resource(TerrainMaterialHandle(materials.add(TerrainMaterial {})));
+    commands.insert_resource(TerrainMaterialHandle(
+        materials.add(TerrainMaterial { sim_sec: 0.0 }),
+    ));
 }
 
 fn update_state(
@@ -169,6 +179,22 @@ fn update_state(
             AppState::Running => AppState::Paused,
             AppState::Paused => AppState::Running,
         });
+    }
+}
+
+#[derive(ExtractResource, Resource, ShaderType, Clone, Default)]
+struct SimTime {
+    sec: f32,
+}
+
+fn tick_sim_time(
+    mut sim: ResMut<SimTime>,
+    time: Res<Time>,
+    mut materials: ResMut<Assets<TerrainMaterial>>,
+) {
+    sim.sec += time.delta_secs();
+    for (_id, material) in materials.iter_mut() {
+        material.sim_sec = sim.sec;
     }
 }
 
@@ -384,8 +410,8 @@ fn setup_sky(
                 // [layout](https://github.com/bevyengine/bevy/blob/main/crates/bevy_pbr/src/render/mesh_view_bindings.wgsl).
                 // Here we just mix 'n match to make it work :)
                 (
+                    (0, uniform_buffer::<SimTime>(false)),
                     (3, uniform_buffer::<ViewUniform>(true)),
-                    (11, uniform_buffer::<GlobalsUniform>(false)),
                 ),
             ),
         ),
@@ -459,24 +485,26 @@ struct SkyBindGroup(BindGroup);
 
 fn prepare_sky_bind_group(
     cam: Single<Entity, With<Camera>>,
+    sim_time: Res<SimTime>,
     rd: Res<RenderDevice>,
+    rq: Res<RenderQueue>,
     specializer: Res<SkyPipelineSpecializer>,
     view_uniforms: Res<ViewUniforms>,
-    globals_buffer: Res<GlobalsBuffer>,
     mut commands: Commands,
 ) {
     let view_bindings = view_uniforms
         .uniforms
         .binding()
         .expect("Could not create view bindings for sky bind group");
-    let globals_binding = globals_buffer
-        .buffer
+    let mut sim_time_buffer = UniformBuffer::from(sim_time.clone());
+    sim_time_buffer.write_buffer(&rd, &rq);
+    let sim_time_binding = sim_time_buffer
         .binding()
-        .expect("Could not create globals bindings for sky bind group");
+        .expect("Could not create SimTime binding");
     let bind_group = rd.create_bind_group(
         "sky_bind_group",
         &specializer.layout,
-        &BindGroupEntries::with_indices(((3, view_bindings), (11, globals_binding))),
+        &BindGroupEntries::with_indices(((0, sim_time_binding), (3, view_bindings))),
     );
     commands.entity(*cam).insert(SkyBindGroup(bind_group));
 }
@@ -557,7 +585,7 @@ fn setup_water(
                     ),
                     (2, sampler(SamplerBindingType::NonFiltering)),
                     (3, uniform_buffer::<ViewUniform>(true)),
-                    (11, uniform_buffer::<GlobalsUniform>(false)),
+                    (4, uniform_buffer::<SimTime>(false)),
                 ),
             ),
         ),
@@ -649,11 +677,14 @@ impl ViewNode for RenderWaterNode {
             .uniforms
             .binding()
             .expect("Could not create view bindings for water bind group");
-        let globals_binding = world
-            .resource::<GlobalsBuffer>()
-            .buffer
+        let mut sim_time_buffer = UniformBuffer::from(world.resource::<SimTime>().clone());
+        sim_time_buffer.write_buffer(
+            render_context.render_device(),
+            world.resource::<RenderQueue>(),
+        );
+        let sim_time_binding = sim_time_buffer
             .binding()
-            .expect("Could not create globals bindings for water bind group");
+            .expect("Could not create SimTime binding");
         let bind_group = render_context.render_device().create_bind_group(
             "water_bind_group",
             &pipeline_specializer.layout,
@@ -662,7 +693,7 @@ impl ViewNode for RenderWaterNode {
                 (1, post_process.source),
                 (2, &pipeline_specializer.sampler),
                 (3, view_bindings),
-                (11, globals_binding),
+                (4, sim_time_binding),
             )),
         );
 

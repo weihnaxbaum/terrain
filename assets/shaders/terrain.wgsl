@@ -6,6 +6,8 @@
 }
 #import noisy_bevy::simplex_noise_2d
 
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> sim_sec: f32;
+
 const fog_density = 0.0002;
 const fog_color = vec3(0.6, 0.6, 0.8);
 
@@ -31,7 +33,7 @@ fn vertex(in: Vertex) -> VertexOutput {
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(vec3(-in.slope.x, 1.0, -in.slope.y));
-    let sun_dir = common::sun_dir(globals.time);
+    let sun_dir = common::sun_dir(sim_sec);
     let moon_dir = common::moon_dir(sun_dir);
     let sun_height = common::map_sky_height(sun_dir.y);
     let moon_height = common::map_sky_height(moon_dir.y);
