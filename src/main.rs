@@ -66,6 +66,8 @@ fn main() -> AppExit {
                     .run_if(in_state(AppState::Running)),
                 update_state,
                 toggle_fullscreen,
+                go_past,
+                go_future,
             ),
         )
         .add_systems(OnEnter(AppState::Paused), on_pause)
@@ -198,6 +200,23 @@ fn tick_sim_time(
     }
 }
 
+#[derive(Component)]
+struct FullscreenBtn;
+
+#[derive(Component)]
+struct PastBtn;
+
+impl PastBtn {
+    const SECS: f32 = 10.0;
+}
+
+#[derive(Component)]
+struct FutureBtn;
+
+impl FutureBtn {
+    const SECS: f32 = 10.0;
+}
+
 fn on_pause(mut commands: Commands) {
     commands.spawn((
         DespawnOnExit(AppState::Paused),
@@ -217,6 +236,7 @@ fn on_pause(mut commands: Commands) {
         children![
             (Text::new("Paused"), TextFont::from_font_size(50.0)),
             (
+                FullscreenBtn,
                 Button,
                 Node {
                     height: Val::Px(50.0),
@@ -230,13 +250,43 @@ fn on_pause(mut commands: Commands) {
                     Text::new("Toggle fullscreen"),
                     TextFont::from_font_size(30.0),
                 )]
+            ),
+            (
+                Node {
+                    height: px(50),
+                    width: percent(70),
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![
+                    (Text::new("Time"), TextFont::from_font_size(30.0)),
+                    (
+                        PastBtn,
+                        Button,
+                        BorderRadius::all(percent(100)),
+                        children![(
+                            Text(format!(" -{}s ", PastBtn::SECS)),
+                            TextFont::from_font_size(30.0),
+                        )]
+                    ),
+                    (
+                        FutureBtn,
+                        Button,
+                        BorderRadius::all(percent(100)),
+                        children![(
+                            Text(format!(" +{}s ", FutureBtn::SECS)),
+                            TextFont::from_font_size(30.0),
+                        )]
+                    ),
+                ]
             )
         ],
     ));
 }
 
 fn toggle_fullscreen(
-    mut q: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<Button>)>,
+    mut q: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<FullscreenBtn>)>,
     mut window: Single<&mut Window>,
 ) {
     for (interaction, mut bg) in &mut q {
@@ -248,6 +298,38 @@ fn toggle_fullscreen(
                     }
                     _ => WindowMode::Windowed,
                 };
+                Color::srgb(0.4, 0.4, 0.4)
+            }
+            Interaction::Hovered => Color::srgb(0.2, 0.2, 0.2),
+            Interaction::None => Color::BLACK,
+        };
+    }
+}
+
+fn go_past(
+    mut q: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<PastBtn>)>,
+    mut sim_time: ResMut<SimTime>,
+) {
+    for (interaction, mut bg) in &mut q {
+        bg.0 = match *interaction {
+            Interaction::Pressed => {
+                sim_time.sec -= PastBtn::SECS;
+                Color::srgb(0.4, 0.4, 0.4)
+            }
+            Interaction::Hovered => Color::srgb(0.2, 0.2, 0.2),
+            Interaction::None => Color::BLACK,
+        };
+    }
+}
+
+fn go_future(
+    mut q: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<FutureBtn>)>,
+    mut sim_time: ResMut<SimTime>,
+) {
+    for (interaction, mut bg) in &mut q {
+        bg.0 = match *interaction {
+            Interaction::Pressed => {
+                sim_time.sec += FutureBtn::SECS;
                 Color::srgb(0.4, 0.4, 0.4)
             }
             Interaction::Hovered => Color::srgb(0.2, 0.2, 0.2),
