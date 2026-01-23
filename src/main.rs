@@ -4,7 +4,7 @@
 use std::{array, borrow::Cow, f32::consts::FRAC_PI_2, mem, result::Result, time::Duration};
 
 use bevy::{
-    camera::primitives::Aabb,
+    camera::{primitives::Aabb, visibility::NoAutoAabb},
     core_pipeline::{
         FullscreenShader,
         core_3d::graph::{Core3d, Node3d},
@@ -21,12 +21,12 @@ use bevy::{
             NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
         },
         render_resource::{
-            AsBindGroup, BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries,
-            CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, MultisampleState,
-            PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-            RenderPipelineDescriptor, Sampler, SamplerBindingType, ShaderStages, ShaderType,
-            SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
-            TextureSampleType, TextureUsages, UniformBuffer, VertexState,
+            AsBindGroup, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
+            BindGroupLayoutEntries, CachedRenderPipelineId, ColorTargetState, ColorWrites,
+            FragmentState, MultisampleState, PipelineCache, RenderPassColorAttachment,
+            RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+            ShaderStages, ShaderType, SpecializedRenderPipeline, SpecializedRenderPipelines,
+            TextureFormat, TextureSampleType, TextureUsages, UniformBuffer, VertexState,
             binding_types::{sampler, texture_2d, texture_2d_multisampled, uniform_buffer},
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
@@ -228,10 +228,10 @@ fn on_pause(mut commands: Commands) {
             justify_self: JustifySelf::Center,
             align_self: AlignSelf::Center,
             align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::Percent(5.0)),
             ..default()
         },
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
-        BorderRadius::all(Val::Percent(5.0)),
         BorderColor::all(Color::BLACK),
         children![
             (Text::new("Paused"), TextFont::from_font_size(50.0)),
@@ -243,9 +243,9 @@ fn on_pause(mut commands: Commands) {
                     width: Val::Percent(70.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(Val::Percent(100.0)),
                     ..default()
                 },
-                BorderRadius::all(Val::Percent(100.0)),
                 children![(
                     Text::new("Toggle fullscreen"),
                     TextFont::from_font_size(30.0),
@@ -264,7 +264,10 @@ fn on_pause(mut commands: Commands) {
                     (
                         PastBtn,
                         Button,
-                        BorderRadius::all(percent(100)),
+                        Node {
+                            border_radius: BorderRadius::all(percent(100)),
+                            ..default()
+                        },
                         children![(
                             Text(format!(" -{}s ", PastBtn::SECS)),
                             TextFont::from_font_size(30.0),
@@ -273,7 +276,10 @@ fn on_pause(mut commands: Commands) {
                     (
                         FutureBtn,
                         Button,
-                        BorderRadius::all(percent(100)),
+                        Node {
+                            border_radius: BorderRadius::all(percent(100)),
+                            ..default()
+                        },
                         children![(
                             Text(format!(" +{}s ", FutureBtn::SECS)),
                             TextFont::from_font_size(30.0),
@@ -381,6 +387,7 @@ fn update_chunks(
                         CHUNK_SIZE / 2.0,
                     ),
                 },
+                NoAutoAabb,
             ));
         }
     }
@@ -476,13 +483,12 @@ fn setup_sky(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     fullscreen_shader: Res<FullscreenShader>,
-    rd: Res<RenderDevice>,
 ) {
     commands.init_resource::<SpecializedRenderPipelines<SkyPipelineSpecializer>>();
     commands.insert_resource(SkyPipelineSpecializer {
         frag: asset_server.load("shaders/sky.wgsl"),
         vert: fullscreen_shader.to_vertex_state(),
-        layout: rd.create_bind_group_layout(
+        layout: BindGroupLayoutDescriptor::new(
             "sky_bind_group_layout",
             &BindGroupLayoutEntries::with_indices(
                 ShaderStages::FRAGMENT,
@@ -504,7 +510,7 @@ fn setup_sky(
 struct SkyPipelineSpecializer {
     frag: Handle<Shader>,
     vert: VertexState,
-    layout: BindGroupLayout,
+    layout: BindGroupLayoutDescriptor,
 }
 
 impl SpecializedRenderPipeline for SkyPipelineSpecializer {
@@ -570,6 +576,7 @@ fn prepare_sky_bind_group(
     sim_time: Res<SimTime>,
     rd: Res<RenderDevice>,
     rq: Res<RenderQueue>,
+    cache: Res<PipelineCache>,
     specializer: Res<SkyPipelineSpecializer>,
     view_uniforms: Res<ViewUniforms>,
     mut commands: Commands,
@@ -585,7 +592,7 @@ fn prepare_sky_bind_group(
         .expect("Could not create SimTime binding");
     let bind_group = rd.create_bind_group(
         "sky_bind_group",
-        &specializer.layout,
+        &cache.get_bind_group_layout(&specializer.layout),
         &BindGroupEntries::with_indices(((0, sim_time_binding), (3, view_bindings))),
     );
     commands.entity(*cam).insert(SkyBindGroup(bind_group));
@@ -655,7 +662,7 @@ fn setup_water(
     commands.insert_resource(WaterPipelineSpecializer {
         frag: asset_server.load("shaders/water.wgsl"),
         vert: fullscreen_shader.to_vertex_state(),
-        layout: rd.create_bind_group_layout(
+        layout: BindGroupLayoutDescriptor::new(
             "water_bind_group_layout",
             &BindGroupLayoutEntries::with_indices(
                 ShaderStages::FRAGMENT,
@@ -679,7 +686,7 @@ fn setup_water(
 struct WaterPipelineSpecializer {
     frag: Handle<Shader>,
     vert: VertexState,
-    layout: BindGroupLayout,
+    layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
 }
 
@@ -769,7 +776,7 @@ impl ViewNode for RenderWaterNode {
             .expect("Could not create SimTime binding");
         let bind_group = render_context.render_device().create_bind_group(
             "water_bind_group",
-            &pipeline_specializer.layout,
+            &pipeline_cache.get_bind_group_layout(&pipeline_specializer.layout),
             &BindGroupEntries::with_indices((
                 (0, view_depth_texture.view()),
                 (1, post_process.source),
